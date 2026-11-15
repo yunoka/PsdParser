@@ -14,6 +14,18 @@ namespace PsdParser
         readonly int depth;
         readonly bool isPSB;
         readonly PsdLimits limits;
+        //合成済みの画像(Image Data の節)
+        internal LayerImage(ChannelImageData[] channels, int width, int height, int depth, ColorMode colorMode, bool isPSB, PsdLimits limits)
+        {
+            ChannelImages = channels;
+            Width = width;
+            Height = height;
+            this.depth = depth;
+            this.colorMode = colorMode;
+            this.isPSB = isPSB;
+            this.limits = limits;
+        }
+
         internal LayerImage(PsdBinaryReader reader, LayerRecord layer, bool isPSB, int depth, ColorMode colorMode, long sectionEnd)
         {
             this.depth = depth;

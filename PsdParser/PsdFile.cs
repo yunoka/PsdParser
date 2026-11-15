@@ -9,6 +9,38 @@
         public ColorModeDataSection ColorModeDataSection { get; }
         public ImageResourceSection ImageResourceSection { get; }
         public LayerAndMaskInformationSection LayerAndMaskInformationSection { get; }
+        //合成済みの画像(ファイルの最後の節)。ファイルがレイヤーとマスクの情報の節で終わっていれば null。初めて使うときに読む
+        //(この節が壊れていても、ファイルを開いてレイヤーは読めるように。壊れていれば、使うときに InvalidPsdDataException)
+        public ImageDataSection? ImageDataSection
+        {
+            get
+            {
+                lock (imageDataLock)
+                {
+                    ObjectDisposedException.ThrowIf(disposedValue, this);
+                    if (imageDataPosition is not { } position || imageDataSection is not null)
+                        return imageDataSection;
+                    try
+                    {
+                        reader.BaseStream.Position = position;
+                        return imageDataSection = new ImageDataSection(reader, Header, LayerAndMaskInformationSection.LayerInfo.HasTransparencyData);
+                    }
+                    catch (Exception ex) when (IsBrokenData(ex))
+                    {
+                        throw new InvalidPsdDataException($"The merged image data is broken: {ex.Message}", ex);
+                    }
+                }
+            }
+        }
+        readonly long? imageDataPosition;
+        ImageDataSection? imageDataSection;
+#if NET9_0_OR_GREATER
+        readonly Lock imageDataLock = new();
+#else
+        readonly object imageDataLock = new();
+#endif
+        //合成済みの画像が本物か(版の情報のリソース 1057。Photoshop の「互換性を優先」で保存したときに true)。リソースがなければ null
+        public bool? HasRealMergedData => ImageResourceSection.Blocks.OfType<ImageResourceBlocks.VersionInfo>().FirstOrDefault()?.HasRealMergedData;
 
         public PsdFile(string file) : this(file, PsdLimits.Default)
         {
@@ -41,6 +73,8 @@
                 ColorModeDataSection = new ColorModeDataSection(reader);
                 ImageResourceSection = new ImageResourceSection(reader);
                 LayerAndMaskInformationSection = new LayerAndMaskInformationSection(reader, Header.Version is 2, Header.Depth, Header.ColorMode);
+                if (stream.Length - stream.Position >= 2)
+                    imageDataPosition = stream.Position;
             }
             catch (Exception ex)
             {
@@ -72,6 +106,9 @@
                     //チャンネルを閉じる(公開の ReadLine が残した ZIP の展開の途中の状態を閉じ、以後の読み込みを例外にする)
                     foreach (var item in LayerAndMaskInformationSection?.LayerInfo?.Items ?? [])
                         foreach (var channel in item.Image?.ChannelImages ?? [])
+                            channel.Close();
+                    lock (imageDataLock)
+                        foreach (var channel in imageDataSection?.ChannelImages ?? [])
                             channel.Close();
                     stream?.Dispose();
                     reader?.Dispose();

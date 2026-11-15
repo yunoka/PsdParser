@@ -17,6 +17,9 @@ namespace PsdParser
         readonly byte[] rleScratch = [];
         //ZIP圧縮のデータの長さ(圧縮したまま)。展開は行の順に1行ずつ行い、チャンネル全体を確保しない
         readonly long zipLength;
+        //ZIP のストリームの中で、このチャンネルの最初の行の前にある行の数と、ストリーム全体の行の数
+        //(レイヤーのチャンネルは1チャンネルで1つのストリーム。合成済みの画像は、全チャンネルが1つのストリームに続けて入る)
+        readonly int zipRowOffset, zipStreamRows;
         //公開の ReadLine が使う展開の途中の状態(LayerImage.Read は呼ぶたびに自分の状態を持つ)
 #if NET9_0_OR_GREATER
         readonly Lock zipLock = new();
@@ -48,6 +51,7 @@ namespace PsdParser
             if (rowLength > Array.MaxLength)
                 throw new InvalidPsdDataException($"Channel row ({rowLength} bytes) is too long.");
             rowBytes = (int)rowLength;
+            zipStreamRows = height;
 
             long size;
             if (Compression is ChannelImageDataCompression.RawData)
@@ -106,6 +110,32 @@ namespace PsdParser
                 throw new InvalidPsdDataException($"Channel data ({reader.BaseStream.Position - start} bytes) is longer than declared ({declaredLength} bytes).");
             reader.BaseStream.Position = start + declaredLength;
         }
+        //合成済みの画像(Image Data の節)のチャンネル。圧縮の種類は節に1つで、位置と RLE の行の位置は ImageDataSection が求めて渡す。
+        //ZIP のときは、全チャンネルが1つのストリームに続けて入っている(zipRowOffset はこのチャンネルの前の行の数)
+        internal ChannelImageData(PsdBinaryReader reader, ChannelId channelId, int width, int height, int depth, ChannelImageDataCompression compression,
+            long position, long[] rleOffsets, long zipLength, int zipRowOffset, int zipStreamRows)
+        {
+            this.reader = reader;
+            this.width = width;
+            this.height = height;
+            this.depth = depth;
+            rowBytes = (int)(((long)width * depth + 7) / 8); //ImageDataSection が範囲を確かめてある
+            Compression = compression;
+            ChannelId = channelId;
+            this.position = position;
+            this.rleOffsets = rleOffsets;
+            this.zipLength = zipLength;
+            this.zipRowOffset = zipRowOffset;
+            this.zipStreamRows = zipStreamRows;
+            if (compression is ChannelImageDataCompression.RLE && reader.UnderlyingBuffer is null)
+            {
+                long maxLine = 0;
+                for (int i = 0; i < height; i++)
+                    maxLine = Math.Max(maxLine, rleOffsets[i + 1] - rleOffsets[i]);
+                rleScratch = new byte[maxLine];
+            }
+        }
+
         //1行を展開してbufferに書く。bufferは1行のバイト数(幅×ビット数/8)ちょうどの長さであること。
         //範囲を確かめる書き方(Span)にして、壊れたファイル・細工したファイルでも範囲の外を読み書きしない
         //ファイルをメモリに読んでいないとき(PsdFile は常にメモリに読むので、今は起きない)は、生のデータと RLE はファイルのストリームの位置を
@@ -225,19 +255,21 @@ namespace PsdParser
             var mem = reader.UnderlyingBuffer ?? throw new NotSupportedException("ZIP compressed channels can only be read from a file in memory.");
             try
             {
-                if (c.Zip is null || y < c.NextRow)
+                //ストリームの中の行(合成済みの画像では、前のチャンネルの行のあとに続く)
+                int streamRow = zipRowOffset + y;
+                if (c.Zip is null || streamRow < c.NextRow)
                 {
                     //deflate は 1 バイトから最大でおよそ 1032 バイトにしか展開できない。それを越える大きさを言う圧縮データは壊れているか細工したもの
                     //(展開しきれないことが、多くの行を展開してからわかるのを避ける。RLE の行の最小の長さと同じ考え)。
                     //ファイルを開くときではなくここで確かめる(使わないチャンネルが壊れていても、ファイルとほかのチャンネルは読めるように)
-                    if ((long)rowBytes * height > (zipLength + 1) * 1032)
-                        throw new InvalidPsdDataException($"ZIP compressed channel data ({zipLength} bytes) is too short for an image of {(long)rowBytes * height} bytes.");
+                    if ((long)rowBytes * zipStreamRows > (zipLength + 1) * 1032)
+                        throw new InvalidPsdDataException($"ZIP compressed channel data ({zipLength} bytes) is too short for an image of {(long)rowBytes * zipStreamRows} bytes.");
                     c.Reset();
                     c.Zip = new ZLibStream(new MemoryStream(mem, checked((int)position), checked((int)zipLength), writable: false), CompressionMode.Decompress);
                 }
-                if ((y > c.NextRow || (prediction && depth == 32)) && c.Scratch.Length < rowBytes)
+                if ((streamRow > c.NextRow || (prediction && depth == 32)) && c.Scratch.Length < rowBytes)
                     c.Scratch = new byte[rowBytes];
-                while (c.NextRow < y)
+                while (c.NextRow < streamRow)
                 {
                     var skipped = c.Scratch.AsSpan(0, rowBytes);
                     c.Zip.ReadExactly(skipped);
@@ -247,7 +279,7 @@ namespace PsdParser
                 c.Zip.ReadExactly(row);
                 c.Update(row);
                 c.NextRow++;
-                if (c.NextRow == height)
+                if (c.NextRow == zipStreamRows)
                 {
                     //画像より多いデータも壊れたものとして扱う
                     Span<byte> extra = stackalloc byte[1];
