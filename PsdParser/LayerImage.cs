@@ -14,9 +14,12 @@ namespace PsdParser
         readonly int depth;
         readonly bool isPSB;
         readonly PsdLimits limits;
+        readonly bool whiteMatte;
         //合成済みの画像(Image Data の節)
-        internal LayerImage(ChannelImageData[] channels, int width, int height, int depth, ColorMode colorMode, bool isPSB, PsdLimits limits)
+        //合成済みの画像(Image Data の節)。whiteMatte なら、色は白の上に重ねた色で保存されているので、読むときに戻す
+        internal LayerImage(ChannelImageData[] channels, int width, int height, int depth, ColorMode colorMode, bool isPSB, PsdLimits limits, bool whiteMatte)
         {
+            this.whiteMatte = whiteMatte;
             ChannelImages = channels;
             Width = width;
             Height = height;
@@ -261,6 +264,10 @@ namespace PsdParser
                         //壊れたデータの例外にそろえるのは読み込みだけ(変換と書き込みの誤りは、ファイルの壊れと取り違えないようにそのまま出す)
                         throw new InvalidPsdDataException($"The layer image is broken: {ex.Message}", ex);
                     }
+                    //白の除去は 8・16 ビットだけ(実物で確かめたのは 8 ビット。16 ビットは同じ明るさの段階の値)。32 ビットはリニアで、
+                    //Photoshop がどの段階で白の上に重ねているかを確かめていないので、そのまま返す
+                    if (whiteMatte && alpha is not null && depth != 32)
+                        RemoveWhiteMatte(colors, alpha);
                     write(y, colors, alpha);
                 }
             }
@@ -269,6 +276,37 @@ namespace PsdParser
                 //ZIP の展開の途中の状態(この呼び出しだけのもの)は、読み終えたときも失敗したときも閉じる
                 foreach (var source in sources)
                     source.Cursor.Dispose();
+            }
+        }
+
+        //白の上に重ねた色から、元の色に戻す(合成済みの画像)。透明度が α のとき、保存された色は c' = c × α + 白 × (1 − α) なので、
+        //c = (c' − 白 × (1 − α)) ÷ α。α が 0 なら色は 0。白は保存の値の最大(CMYK は値が反転していて、最大がインク 0% = 白)。
+        //ビット数ごとの生の値(ビッグエンディアン)の段階で戻すので、3 つの読み方のすべてに同じように効く。8・16 ビットだけ(呼ぶ側で確かめる)
+        void RemoveWhiteMatte(byte[][] colors, byte[] alpha)
+        {
+            for (int x = 0; x < Width; x++)
+            {
+                switch (depth)
+                {
+                    case 8:
+                        {
+                            int a = alpha[x];
+                            foreach (var row in colors)
+                                row[x] = a == 0 ? (byte)0 : (byte)Math.Clamp((int)Math.Round((row[x] - (255 - a)) * 255.0 / a, MidpointRounding.AwayFromZero), 0, 255);
+                            break;
+                        }
+                    case 16:
+                        {
+                            int a = BinaryPrimitives.ReadUInt16BigEndian(alpha.AsSpan(x * 2));
+                            foreach (var row in colors)
+                            {
+                                int c = BinaryPrimitives.ReadUInt16BigEndian(row.AsSpan(x * 2));
+                                var v = a == 0 ? 0 : Math.Clamp((int)Math.Round((c - (65535 - a)) * 65535.0 / a, MidpointRounding.AwayFromZero), 0, 65535);
+                                BinaryPrimitives.WriteUInt16BigEndian(row.AsSpan(x * 2), (ushort)v);
+                            }
+                            break;
+                        }
+                }
             }
         }
 

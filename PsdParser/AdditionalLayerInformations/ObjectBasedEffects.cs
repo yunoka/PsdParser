@@ -45,8 +45,15 @@ namespace PsdParser.AdditionalLayerInformations
             }
             else
             {
+                //ファイルをメモリに読んでいないとき(PsdFile は常にメモリに読むので、今は起きない)は写す。読み足りなければ、使うときの例外にする
                 bytes = reader.ReadBytes((int)size);
                 offset = 0;
+                if (bytes.Length < size)
+                {
+                    var read = bytes.Length;
+                    descriptor = new(() => throw new InvalidPsdDataException($"Layer effects data ({size} bytes) could only be read in part ({read} bytes)."));
+                    return;
+                }
             }
             descriptor = new(() =>
             {

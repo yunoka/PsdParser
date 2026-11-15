@@ -95,7 +95,10 @@
                 ChannelImages[c] = new ChannelImageData(reader, id, width, height, depth, Compression, positions[c], rleOffsets[c] ?? [],
                     zipLength, c * height, channels * height);
             }
-            Image = new LayerImage(ChannelImages, width, height, depth, header.ColorMode, isPSB, reader.Limits);
+            //透明度のある文書の合成済みの画像は、Photoshop が白の上に重ねた色で保存している(Photoshop で保存した実物の PSD で、半透明の画素の色が
+            //白の上に重ねた式に合うことを確かめた)。
+            //読むときに元の色に戻す
+            Image = new LayerImage(ChannelImages, width, height, depth, header.ColorMode, isPSB, reader.Limits, whiteMatte: hasTransparency);
         }
     }
 }
