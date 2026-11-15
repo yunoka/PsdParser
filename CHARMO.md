@@ -32,6 +32,61 @@
 - **例外：** 値の検査の外れと、壊れたデータで起きる例外（ファイルの終わり、計算のあふれ、署名の誤り、位置の不一致など）は `InvalidPsdDataException` にそろえる（署名と位置の例外はこの型を継承する）。対応していない機能（1 ビットの画像、インデックス・Lab などの色の形式の画像への変換など）は、これまでどおり `NotSupportedException`。どの例外でも、`PsdFile` の作成に失敗したら、ファイル全体を読んだメモリをすぐに手放す
 - **上流のまま残したもの：** セクションの終わりで、詰め物を数バイト読みすぎたときに位置を戻して合わせる処理（正しいファイルでも起きる。読みすぎはファイルの範囲の中なので、メモリの安全には関わらない）
 
+## 使い方（charmo ブランチで足したもの）
+
+上流と同じ呼び方（`new PsdFile(path)`、`LayerImage.Read()`）は、そのまま使えます。この節では、charmo ブランチで足したものの使い方をまとめます。対象のフレームワークは `net8.0` と `net10.0` です。
+
+```csharp
+using PsdParser;
+
+// 上限を付けて開く（省略すると、仕様の範囲だけで確かめる）。ファイル全体をメモリに読むので、使い終えたら Dispose する
+using var psd = new PsdFile("logo.psd", new PsdLimits { MaxSide = 16_000, MaxPixels = 64_000_000, MaxFileBytes = 1L << 30 });
+
+foreach (var (layer, image) in psd.LayerAndMaskInformationSection.LayerInfo.Items) // layer.LayerName・layer.Opacity など
+{
+    try
+    {
+        byte[] bgra = image.Read();                      // 8 ビットの BGRA（上流と同じ）
+        ushort[] rgba16 = image.ReadRgba16();            // 16 ビットの RGBA
+        float[] linear = image.ReadRgbaFloat();          // float の RGBA（色はリニア）
+        float[] srgb = image.ReadRgbaFloat(linear: false); // float の RGBA（色は sRGB の明るさ）
+    }
+    catch (InvalidPsdDataException) { /* このレイヤーのデータが壊れている。ほかのレイヤーは読める */ }
+    catch (NotSupportedException) { /* 対応していないビット数・色の形式（1 ビット、インデックス、Lab など） */ }
+}
+```
+
+### 読めるもの
+
+- **ビット数と色の形式：** 8・16・32 ビットの RGB とグレースケール、8・16 ビットの CMYK（32 ビットの CMYK は、Photoshop で作れないので扱わない）
+- **圧縮：** 生のデータ、RLE、ZIP（予測なし・予測付き）
+- **画像にするチャンネル：** 色のチャンネルと透明度（-1）だけ。特色などの余分なチャンネルとマスクは、`ChannelImages` から自分で読む
+
+### 3 つの読み方の違い
+
+| メソッド | 返すもの | 並び | 1 画素のバイト数 | 16・32 ビットの扱い |
+|---|---|---|---|---|
+| `Read()` | `byte[]` | B・G・R・A | 4 | 8 ビットに丸める。32 ビットの色はリニアから sRGB に直す |
+| `ReadRgba16()` | `ushort[]` | R・G・B・A | 8 | 16 ビットのまま。8 ビットは ×257 で広げる。32 ビットの色は sRGB に直す |
+| `ReadRgbaFloat(bool linear = true)` | `float[]` | R・G・B・A | 16 | 色は、ビット数によらずリニア（既定）か sRGB の明るさにそろえる。32 ビットの 0〜1 の外の値は残す |
+
+- どれもストレートアルファ（色に透明度を掛けていない値）です。`ReadRgba16()`・`ReadRgbaFloat()` の並びは、SkiaSharp の `SKColorType.Rgba16161616`・`SKColorType.RgbaF32` にそのまま渡せます
+- 32 ビットのファイルはリニア、8・16 ビットのファイルは sRGB の明るさで保存されているとみなします。埋め込まれた ICC プロファイルは使いません
+- CMYK は、ICC プロファイルを使わない簡単な式で RGB にします（印刷の色とはずれます）
+- `PsdLimits` の画素の数の上限は、3 つの読み方に同じに効きます。メモリは `Read()` の 2 倍（16 ビット）・4 倍（float）になるので、上限はそれを見込んで決めてください
+
+### 例外
+
+| 例外 | 起きるとき |
+|---|---|
+| `InvalidPsdDataException` | ファイルが壊れている、細工されている、`PsdLimits` を越える。ファイルを開くとき（ファイル全体）と、レイヤーを画像にするとき（そのレイヤーだけ）に起きる |
+| `NotSupportedException` | 対応していないビット数・色の形式・圧縮 |
+| `ObjectDisposedException` | `PsdFile` を Dispose したあとに、チャンネルを読んだ |
+
+### スレッド
+
+同じ `PsdFile` のレイヤーを、複数のスレッドから同時に画像にしてかまいません（ZIP の展開の途中の状態は、読み方を呼ぶたびに別々に持ちます）。`ChannelImageData.ReadLine` を直接呼ぶときは、ZIP のチャンネルの展開の状態が 1 つを共有するので、行を上から順に読むと速く読めます（前の行に戻ると、先頭から展開し直します）。
+
 ## Charmo の側でしていること（このフォークのコードは変えていない）
 
 - `Microsoft.SourceLink.GitHub`（パッケージを作るときにだけ使う）の参照を、Charmo のビルドの設定で外している
