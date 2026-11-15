@@ -8,6 +8,7 @@
             var position = reader.BaseStream.Position;
 
             var length = reader.ReadUInt32();
+            reader.EnsureAvailable(length, "Layer blending ranges");
             ChannelRanges = new ChannelRange[length/8];
             for(int i = 0; i < length / 8; i++)
             {

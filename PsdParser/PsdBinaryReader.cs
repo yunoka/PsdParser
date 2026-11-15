@@ -7,8 +7,35 @@ using System.Threading.Tasks;
 
 namespace PsdParser
 {
-    internal class PsdBinaryReader(Stream input) : BinaryReader(input)
+    internal class PsdBinaryReader(Stream input, PsdLimits limits) : BinaryReader(input)
     {
+        public PsdLimits Limits { get; } = limits;
+
+        //ファイルに書かれた長さ(バイト数)が、0以上で、今の位置からファイルの終わりまでに収まるかを確かめる。
+        //収まらない値で配列を確保したり位置を進めたりしないよう、使う前に呼ぶ。
+        public void EnsureAvailable(long length, string what)
+        {
+            if (length < 0 || length > BaseStream.Length - BaseStream.Position)
+                throw new InvalidPsdDataException($"{what} ({length} bytes) does not fit in the file.");
+        }
+
+        //幅・高さが0以上で、上限に収まるかを確かめる。callerLimits が false なら仕様の範囲だけ、true なら PsdLimits の上限も使う。
+        //幅・高さが0以上で、32ビットの整数に収まるか
+        public void EnsureNonNegativeSize(long width, long height, string what)
+        {
+            if (width < 0 || height < 0 || width > int.MaxValue || height > int.MaxValue)
+                throw new InvalidPsdDataException($"{what} size {width}x{height} is out of range.");
+        }
+
+        public void EnsureSize(long width, long height, bool isPSB, string what, bool callerLimits)
+        {
+            var side = callerLimits ? Limits.SideLimit(isPSB) : PsdLimits.SpecSideLimit(isPSB);
+            if (width < 0 || height < 0 || width > side || height > side)
+                throw new InvalidPsdDataException($"{what} size {width}x{height} is out of range (each side must be 0 to {side}).");
+            if (callerLimits && width * height > Limits.MaxPixels)
+                throw new InvalidPsdDataException($"{what} size {width}x{height} exceeds the limit of {Limits.MaxPixels} pixels.");
+        }
+
         //入力がメモリ上のバッファなら、デコード時にコピーを介さず直接読むために公開する。
         //(PsdFileはpubliclyVisibleなMemoryStreamを渡すためGetBufferが使える)
         public byte[]? UnderlyingBuffer { get; } = (input as MemoryStream)?.GetBuffer();
@@ -48,7 +75,9 @@ namespace PsdParser
 
         public string ReadUnicodeString()
         {
-            var length = ReadInt32() * 2;
+            var count = ReadInt32();
+            EnsureAvailable((long)count * 2, "Unicode string");
+            var length = count * 2;
             var bytes = ReadBytes(length);
             var txt =  Encoding.BigEndianUnicode.GetString(bytes, 0, length);
             return txt;

@@ -27,6 +27,10 @@
             Left = reader.ReadInt32();
             Bottom = reader.ReadInt32();
             Right = reader.ReadInt32();
+            //レイヤーはキャンバスからはみ出してよい(仕様の上限より大きいこともある)ので、ここでは幅・高さが 0 以上で 32 ビットに収まることだけを
+            //確かめる。大きさの上限(仕様と呼び出し側)は、そのレイヤーを画像にするとき(LayerImage.Read)に確かめる。チャンネルのデータの
+            //大きさは、ファイルとセクションに収まるかで確かめる(ChannelImageData)ので、大きな値で巨大な確保はしない
+            reader.EnsureNonNegativeSize((long)Right - Left, (long)Bottom - Top, "Layer");
 
             Channels = reader.ReadUInt16();
             ChannelInfos = new ChannelInformation[Channels];
@@ -44,9 +48,10 @@
             reader.BaseStream.Position += 1;
 
             ExtraDataLength = reader.ReadUInt32();
+            reader.EnsureAvailable(ExtraDataLength, "Layer extra data");
             var extraDataPosition = reader.BaseStream.Position;
 
-            LayerMaskAndAdjustmentLayerData = new LayerMaskAndAdjustmentLayerData(reader);
+            LayerMaskAndAdjustmentLayerData = new LayerMaskAndAdjustmentLayerData(reader, isPSB);
             LayerBlendingRangesData = new LayerBlendingRangesData(reader);
             LayerName = reader.ReadPascalString(4);
 
@@ -55,6 +60,7 @@
             while (maxPadding <= extraDataPosition + ExtraDataLength - reader.BaseStream.Position)
                 additional.Add(AdditionalLayerInformation.Parse(reader, isPSB));
             AdditionalLayerInformations = [.. additional];
+            //残りが詰め物だけなら終わりまで進める(追加情報のあとの詰め物を読み飛ばすときに数バイト読みすぎることがあり、そのときも戻して合わせる。上流と同じ)
             if (extraDataPosition + ExtraDataLength - reader.BaseStream.Position < maxPadding)
                 reader.BaseStream.Position = extraDataPosition + ExtraDataLength;
 

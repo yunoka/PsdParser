@@ -9,6 +9,7 @@
         {
             var position = reader.BaseStream.Position;
             Length = reader.ReadUInt32();
+            reader.EnsureAvailable(Length, "Image resource section");
 
             var blocks = new List<ImageResourceBlock>();
             while (reader.BaseStream.Position - position < Length)

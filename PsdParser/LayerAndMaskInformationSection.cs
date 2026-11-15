@@ -13,11 +13,12 @@
 
             Length = isPSB ? reader.ReadInt64() : reader.ReadUInt32();
             var lengthSize = isPSB ? 8 : 4;
+            reader.EnsureAvailable(Length, "Layer and mask information section");
             if (Length > 0)
             {
                 LayerInfo = new LayerInfo(reader, isPSB, depth, colorMode);
 
-                if (reader.BaseStream.Position == position + 4 + Length)
+                if (reader.BaseStream.Position == position + lengthSize + Length)
                 {
                     GlobalLayerMaskInfo = new GlobalLayerMaskInfo();
                     AdditionalLayerInformations = [];
@@ -31,6 +32,7 @@
                     while (maxPadding <= position + lengthSize + Length - reader.BaseStream.Position)
                         additionalInfos.Add(AdditionalLayerInformation.Parse(reader, isPSB));
                     AdditionalLayerInformations = [.. additionalInfos];
+                    //残りが詰め物だけなら終わりまで進める(詰め物を数バイト読みすぎたときも戻して合わせる。上流と同じ)
                     if (position + lengthSize + Length - reader.BaseStream.Position < maxPadding)
                         reader.BaseStream.Position = position + lengthSize + Length;
                 }

@@ -9,6 +9,7 @@
             var position = reader.BaseStream.Position;
 
             Length = reader.ReadUInt32();
+            reader.EnsureAvailable(Length, "Color mode data");
             reader.BaseStream.Position += Length;
 
             InvalidStreamPositionException.ThrowIfInvalid(reader,position, Length + 4);

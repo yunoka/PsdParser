@@ -66,6 +66,7 @@ namespace PsdParser
 
             bool isLongLength = isPSB && LongLengthKeys.Contains(key);
             var length = isLongLength ? reader.ReadInt64() : reader.ReadUInt32();
+            reader.EnsureAvailable(length, "Additional layer information");
 
             var info = key switch
             {

@@ -34,6 +34,7 @@ namespace PsdParser
             var key = (ImageResourceBlockId)reader.ReadUInt16();
             var name = reader.ReadPascalString(2, out var nameSize);
             var dataSize = reader.ReadUInt32();
+            reader.EnsureAvailable(dataSize, "Image resource");
 
             var block = key switch
             {

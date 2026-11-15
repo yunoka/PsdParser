@@ -20,10 +20,13 @@
         public int MaskLeft { get; }
         public int MaskBottom { get; }
         public int MaskRight { get; }
-        internal LayerMaskAndAdjustmentLayerData(PsdBinaryReader reader)
+        internal LayerMaskAndAdjustmentLayerData(PsdBinaryReader reader, bool isPSB)
         {
             var position = reader.BaseStream.Position;
             Size = reader.ReadInt32();
+            reader.EnsureAvailable(Size, "Layer mask data");
+            //値の検査のエラー(InvalidPsdDataException)は、そのまま出す(finallyの位置の検査で別の例外に置き換えない)
+            var invalid = false;
             try
             {
                 if (Size is 0)
@@ -33,6 +36,9 @@
                 Left = reader.ReadInt32();
                 Bottom = reader.ReadInt32();
                 Right = reader.ReadInt32();
+                invalid = true;
+                reader.EnsureNonNegativeSize((long)Right - Left, (long)Bottom - Top, "Layer mask");
+                invalid = false;
 
                 DefaultColor = reader.ReadByte();
                 Flags = (LayerMaskAndAdjustmentLayerDataFlags)reader.ReadByte();
@@ -54,13 +60,17 @@
                 MaskLeft = reader.ReadInt32();
                 MaskBottom = reader.ReadInt32();
                 MaskRight = reader.ReadInt32();
+                invalid = true;
+                reader.EnsureNonNegativeSize((long)MaskRight - MaskLeft, (long)MaskBottom - MaskTop, "Real layer mask");
+                invalid = false;
 
                 if (position + Size + 4 - reader.BaseStream.Position is 1)
                     reader.BaseStream.Position += 1;
             }
             finally
             {
-                InvalidStreamPositionException.ThrowIfInvalid(reader, position, Size + 4);
+                if (!invalid)
+                    InvalidStreamPositionException.ThrowIfInvalid(reader, position, Size + 4);
             }
         }
     }

@@ -4,7 +4,6 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <Authors>ManjuSummoner</Authors>
     <PackageProjectUrl>https://github.com/manju-summoner/PsdParser</PackageProjectUrl>
     <PackageReadmeFile>README.md</PackageReadmeFile>

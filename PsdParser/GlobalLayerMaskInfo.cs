@@ -12,6 +12,7 @@
             var position = reader.BaseStream.Position;
 
             Length = reader.ReadUInt32();
+            reader.EnsureAvailable(Length, "Global layer mask info");
             try
             {
                 if (Length is 0)
