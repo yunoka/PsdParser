@@ -41,6 +41,7 @@ namespace PsdParser
                 ImageResourceBlockId.LayersGroupInformation => new LayersGroupInformation(reader, key, name, dataSize),
                 ImageResourceBlockId.LayerGroupsEnabledId => new LayerGroupsEnabledId(reader, key, name, dataSize),
                 ImageResourceBlockId.VersionInfo => new VersionInfo(reader, key, name, dataSize),
+                ImageResourceBlockId.GlobalAngle => new GlobalAngle(reader, key, name, dataSize),
                 _ => new ImageResourceBlock(reader, key, name, dataSize),
             };
             reader.BaseStream.Position += dataSize % 2;

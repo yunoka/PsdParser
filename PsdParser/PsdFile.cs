@@ -41,6 +41,8 @@
 #endif
         //合成済みの画像が本物か(版の情報のリソース 1057。Photoshop の「互換性を優先」で保存したときに true)。リソースがなければ null
         public bool? HasRealMergedData => ImageResourceSection.Blocks.OfType<ImageResourceBlocks.VersionInfo>().FirstOrDefault()?.HasRealMergedData;
+        //包括光源の角度(度。リソース 1037)。レイヤースタイルの「包括光源を使用」の効果が使う。リソースがない・読めなければ 30(仕様書の既定)
+        public int GlobalLightAngle => ImageResourceSection.Blocks.OfType<ImageResourceBlocks.GlobalAngle>().FirstOrDefault()?.Angle ?? 30;
 
         public PsdFile(string file) : this(file, PsdLimits.Default)
         {
