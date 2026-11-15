@@ -1,4 +1,5 @@
-﻿using System.Runtime.InteropServices;
+﻿using System.Buffers.Binary;
+using System.Runtime.InteropServices;
 
 namespace PsdParser
 {
@@ -48,11 +49,14 @@ namespace PsdParser
             }
         }
 
-        //BGRA(1画素4バイト)の画像にする。8ビットのRGBとCMYKだけに対応する
+        //BGRA(1画素4バイト、8ビット)の画像にする。RGB・グレースケール・CMYKの、8・16・32ビットに対応する。
+        //16・32ビットは8ビットに直す(16ビットは四捨五入、32ビットは浮動小数を0〜1に収めてから四捨五入)
         public byte[] Read()
         {
-            if (depth != 8)
+            if (depth is not (8 or 16 or 32))
                 throw new NotSupportedException($"Not supported bit depth: {depth}");
+            if (colorMode is not (ColorMode.RGB or ColorMode.Grayscale or ColorMode.CMYK))
+                throw new NotSupportedException($"Not supported format: {colorMode}");
 
             //呼び出し側の上限(PsdLimits)は、ファイル全体ではなくこのレイヤーだけに効かせる(キャンバスからはみ出した大きなレイヤーが
             //1枚あっても、ほかのレイヤーは読めるように)。大きさは64ビットで求め、配列に収まるかも確かめる(32ビットではあふれうる)
@@ -63,91 +67,116 @@ namespace PsdParser
 
             try
             {
-                if (colorMode is ColorMode.RGB)
-                    return ReadRGB();
-                else if (colorMode is ColorMode.CMYK)
-                    return ReadCMYK();
+                return Compose();
             }
             catch (Exception ex) when (PsdFile.IsBrokenData(ex))
             {
                 throw new InvalidPsdDataException($"The layer image is broken: {ex.Message}", ex);
             }
-            throw new NotSupportedException($"Not supported format: {colorMode}");
         }
 
-        byte[] ReadRGB()
+        byte[] Compose()
         {
             byte[] buffer = new byte[Width * Height * 4];
 
-            var b = new byte[Width];
-            var g = new byte[Width];
-            var r = new byte[Width];
-            var a = new byte[Width];
-            Array.Fill(a, byte.MaxValue);
+            //色のチャンネル(RGBなら0〜2、グレースケールなら0、CMYKなら0〜3)と透明度(-1)の、8ビットに直した1行分
+            int colors = colorMode switch { ColorMode.RGB => 3, ColorMode.Grayscale => 1, _ => 4 };
+            var planes = new byte[colors + 1][];
+            for (int i = 0; i < planes.Length; i++)
+                planes[i] = new byte[Width];
+            var alpha = planes[colors];
+            Array.Fill(alpha, byte.MaxValue);
 
-            //y行ループの内側で毎回ChannelIdのswitchをしないよう、対応するチャンネルだけ事前に抽出する。
-            var planes = BuildPlanes(r, g, b, a);
+            //y行ループの内側で毎回ChannelIdのswitchをしないよう、対応するチャンネルだけ事前に抽出する
+            var rowBytes = (int)(((long)Width * depth + 7) / 8); //Width は Read() で上限を確かめてある
+            var sources = new List<(ChannelImageData Image, byte[] Raw, byte[] Plane, ChannelImageData.ZipCursor Cursor)>();
+            foreach (var image in ChannelImages)
+            {
+                //色のチャンネルは 0〜(色の数 − 1)、透明度は -1 だけ。それ以外(特色・余分なチャンネル・マスク)は使わない
+                int index;
+                if (image.ChannelId == ChannelId.TransparencyMask)
+                    index = colors;
+                else if ((int)image.ChannelId >= 0 && (int)image.ChannelId < colors)
+                    index = (int)image.ChannelId;
+                else
+                    continue;
+                sources.Add((image, depth == 8 ? planes[index] : new byte[rowBytes], planes[index], new ChannelImageData.ZipCursor()));
+            }
 
-            //範囲を確かめる書き方(Span)で並べ替える
+            try
+            {
+                ComposeRows(buffer, colors, planes, sources);
+            }
+            finally
+            {
+                //ZIP の展開の途中の状態(この呼び出しだけのもの)は、読み終えたときも失敗したときも閉じる
+                foreach (var source in sources)
+                    source.Cursor.Dispose();
+            }
+            return buffer;
+        }
+
+        void ComposeRows(byte[] buffer, int colors, byte[][] planes, List<(ChannelImageData Image, byte[] Raw, byte[] Plane, ChannelImageData.ZipCursor Cursor)> sources)
+        {
+            var alpha = planes[colors];
             for (int y = 0; y < Height; y++)
             {
-                foreach (var (image, plane) in planes)
-                    image.ReadLine(plane, y);
+                foreach (var (image, raw, plane, cursor) in sources)
+                {
+                    image.ReadLine(raw, y, cursor);
+                    if (depth != 8)
+                        To8Bit(raw, plane, isColor: plane != alpha);
+                }
 
                 //1画素を4バイトまとめて書く(BGRAの並び。範囲の確認を画素ごと1回に減らす)
                 var dst = MemoryMarshal.Cast<byte, uint>(buffer.AsSpan(y * Width * 4, Width * 4));
-                for (int x = 0; x < dst.Length; x++)
-                    dst[x] = Pack(b[x], g[x], r[x], a[x]);
+                switch (colorMode)
+                {
+                    case ColorMode.RGB:
+                        for (int x = 0; x < dst.Length; x++)
+                            dst[x] = Pack(planes[2][x], planes[1][x], planes[0][x], alpha[x]);
+                        break;
+                    case ColorMode.Grayscale:
+                        for (int x = 0; x < dst.Length; x++)
+                            dst[x] = Pack(planes[0][x], planes[0][x], planes[0][x], alpha[x]);
+                        break;
+                    default:
+                        //CMYK(PSDでは値が反転していて、255がインク0%)。ICCプロファイルを使わない簡単な式
+                        for (int x = 0; x < dst.Length; x++)
+                        {
+                            var k = planes[3][x];
+                            dst[x] = Pack((byte)(planes[2][x] * k / 255), (byte)(planes[1][x] * k / 255), (byte)(planes[0][x] * k / 255), alpha[x]);
+                        }
+                        break;
+                }
             }
-            return buffer;
+        }
+
+        //16・32ビットの1行(ビッグエンディアン)を8ビットにする。32ビットの色はリニア(ガンマ 1.0)で保存されているので、
+        //色のチャンネルは sRGB の明るさに直してから8ビットにする(透明度はリニアのまま)。丸めは四捨五入(0.5 は大きいほうへ)
+        void To8Bit(byte[] raw, byte[] plane, bool isColor)
+        {
+            if (depth == 16)
+            {
+                for (int x = 0; x < plane.Length; x++)
+                    plane[x] = (byte)((BinaryPrimitives.ReadUInt16BigEndian(raw.AsSpan(x * 2)) * 255 + 32767) / 65535);
+            }
+            else
+            {
+                for (int x = 0; x < plane.Length; x++)
+                {
+                    var value = BinaryPrimitives.ReadSingleBigEndian(raw.AsSpan(x * 4));
+                    double v = Math.Clamp(float.IsNaN(value) ? 0 : value, 0, 1);
+                    if (isColor)
+                        v = v <= 0.0031308 ? v * 12.92 : 1.055 * Math.Pow(v, 1 / 2.4) - 0.055;
+                    plane[x] = (byte)Math.Round(v * 255, MidpointRounding.AwayFromZero);
+                }
+            }
         }
 
         //メモリ上の並びが B, G, R, A になる 4 バイトの値(リトルエンディアン・ビッグエンディアンのどちらでも)
         static uint Pack(byte b, byte g, byte r, byte a) => BitConverter.IsLittleEndian
             ? (uint)(b | g << 8 | r << 16 | a << 24)
             : (uint)(b << 24 | g << 16 | r << 8 | a);
-
-        List<(ChannelImageData image, byte[] plane)> BuildPlanes(byte[] r, byte[] g, byte[] b, byte[] a)
-        {
-            var planes = new List<(ChannelImageData, byte[])>(ChannelImages.Length);
-            foreach (var image in ChannelImages)
-            {
-                var plane = image.ChannelId switch { ChannelId.R => r, ChannelId.G => g, ChannelId.B => b, ChannelId.TransparencyMask => a, _ => null };
-                if (plane is not null)
-                    planes.Add((image, plane));
-            }
-            return planes;
-        }
-
-        byte[] ReadCMYK()
-        {
-            byte[] buffer = new byte[Width * Height * 4];
-            var c = new byte[Width];
-            var m = new byte[Width];
-            var y = new byte[Width];
-            var k = new byte[Width];
-            var a = new byte[Width];
-            Array.Fill(a, byte.MaxValue);
-
-            var planes = new List<(ChannelImageData image, byte[] plane)>(ChannelImages.Length);
-            foreach (var image in ChannelImages)
-            {
-                var plane = image.ChannelId switch { ChannelId.C => c, ChannelId.M => m, ChannelId.Y => y, ChannelId.K => k, ChannelId.TransparencyMask => a, _ => null };
-                if (plane is not null)
-                    planes.Add((image, plane));
-            }
-
-            //範囲を確かめる書き方(Span)で並べ替える
-            for (int yi = 0; yi < Height; yi++)
-            {
-                foreach (var (image, plane) in planes)
-                    image.ReadLine(plane, yi);
-
-                var dst = MemoryMarshal.Cast<byte, uint>(buffer.AsSpan(yi * Width * 4, Width * 4));
-                for (int x = 0; x < dst.Length; x++)
-                    dst[x] = Pack((byte)(y[x] * k[x] / 255), (byte)(m[x] * k[x] / 255), (byte)(c[x] * k[x] / 255), a[x]);
-            }
-            return buffer;
-        }
     }
 }

@@ -54,7 +54,8 @@
         }
 
         //壊れたデータで起きる例外(ファイルの途中で終わる、計算があふれる、範囲の外を指す)か。
-        //対応していない機能(NotSupportedException。ZIP圧縮など)と、値の検査の例外(InvalidPsdDataException)は含めない
+        //対応していない機能(NotSupportedException。1ビットの画像、インデックスなどの色の形式の画像への変換など)と、
+        //値の検査の例外(InvalidPsdDataException)は含めない
         //(引数の誤りの例外は、呼び出し方の誤りかもしれないので含めない。読み込みの中で起きるものは、上の catch で別に扱う)
         internal static bool IsBrokenData(Exception ex) =>
             ex is EndOfStreamException or OverflowException or IndexOutOfRangeException or InvalidCastException;
@@ -68,6 +69,10 @@
                 if (disposing)
                 {
                     // マネージド状態を破棄します (マネージド オブジェクト)
+                    //チャンネルを閉じる(公開の ReadLine が残した ZIP の展開の途中の状態を閉じ、以後の読み込みを例外にする)
+                    foreach (var item in LayerAndMaskInformationSection?.LayerInfo?.Items ?? [])
+                        foreach (var channel in item.Image?.ChannelImages ?? [])
+                            channel.Close();
                     stream?.Dispose();
                     reader?.Dispose();
                 }
