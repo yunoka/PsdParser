@@ -30,11 +30,26 @@
                     var maxPadding = AdditionalLayerInformation.MinSize(isPSB);
                     var additionalInfos = new List<AdditionalLayerInformation>();
                     while (maxPadding <= position + lengthSize + Length - reader.BaseStream.Position)
-                        additionalInfos.Add(AdditionalLayerInformation.Parse(reader, isPSB));
+                        additionalInfos.Add(AdditionalLayerInformation.Parse(reader, isPSB, position + lengthSize + Length));
                     AdditionalLayerInformations = [.. additionalInfos];
-                    //残りが詰め物だけなら終わりまで進める(詰め物を数バイト読みすぎたときも戻して合わせる。上流と同じ)
+                    //残りが詰め物だけなら終わりまで進める(上流と同じ)
                     if (position + lengthSize + Length - reader.BaseStream.Position < maxPadding)
                         reader.BaseStream.Position = position + lengthSize + Length;
+
+                    //16・32ビットの文書では、レイヤーの情報の節は空(長さ0)で、レイヤーは追加情報の Lr16・Lr32 に入っている。
+                    //ビット数に合うほうを先に探し、なければもう一方を使う(psd-tools と同じく両方を見る)。
+                    //壊れていれば、ふつうのレイヤーの情報が壊れているときと同じく、ファイルを開けない
+                    var (first, second) = depth == 32
+                        ? (AdditionalLayerInformationKey.Lr32, AdditionalLayerInformationKey.Lr16)
+                        : (AdditionalLayerInformationKey.Lr16, AdditionalLayerInformationKey.Lr32);
+                    var block = AdditionalLayerInformations.FirstOrDefault(i => i.Key == first) ?? AdditionalLayerInformations.FirstOrDefault(i => i.Key == second);
+                    if (LayerInfo.IsEmptySection && block is not null)
+                    {
+                        var end = reader.BaseStream.Position;
+                        reader.BaseStream.Position = block.Position;
+                        LayerInfo = new LayerInfo(reader, isPSB, depth, colorMode, block.Position + block.Length);
+                        reader.BaseStream.Position = end;
+                    }
                 }
             }
             else

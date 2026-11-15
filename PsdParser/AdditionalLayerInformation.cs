@@ -54,7 +54,8 @@ namespace PsdParser
 
         private protected virtual void Load(PsdBinaryReader reader, long length) { }
 
-        internal static AdditionalLayerInformation Parse(PsdBinaryReader reader,bool isPSB)
+        //end: 追加情報が並ぶ範囲の終わり(レイヤーの追加のデータか、レイヤーとマスクの情報の節の終わり)。あとの詰め物はここまでしか読み飛ばさない
+        internal static AdditionalLayerInformation Parse(PsdBinaryReader reader, bool isPSB, long end)
         {
             var position = reader.BaseStream.Position;
 
@@ -80,19 +81,24 @@ namespace PsdParser
             //CAIは4バイトアライメントされている必要がある？CAIに関する記述がドキュメント（https://www.adobe.com/devnet-apps/photoshop/fileformatashtml/）に存在しないため詳細は不明
             //Photoshop 2024以降で保存したファイルにCAIが含まれる可能性がある
             //https://helpx.adobe.com/jp/photoshop/using/content-credentials.html
-            length += SkipZeroPadding(reader);
+            length += SkipZeroPadding(reader, end);
 
             var offset = 4 + 4 + (isLongLength ? 8 : 4);
             InvalidStreamPositionException.ThrowIfInvalid(reader, position, offset + length);
             return info;
         }
-        static int SkipZeroPadding(BinaryReader reader)
+        //0の詰め物を読み飛ばす。範囲の終わり(end)で止める(越えて次の節の先頭の0や、ファイルの終わりまで読まないように)
+        static int SkipZeroPadding(BinaryReader reader, long end)
         {
             var current = reader.BaseStream.Position;
-            while(reader.ReadByte() is 0)
+            while (reader.BaseStream.Position < end)
             {
+                if (reader.ReadByte() != 0)
+                {
+                    reader.BaseStream.Position--;
+                    break;
+                }
             }
-            reader.BaseStream.Position--;
             return (int)(reader.BaseStream.Position - current);
         }
         public static int MinSize(bool isPSB) => 4 + 4 + (isPSB ? 8 : 4);

@@ -58,9 +58,9 @@
             var maxPadding = AdditionalLayerInformation.MinSize(isPSB);
             var additional = new List<AdditionalLayerInformation>();
             while (maxPadding <= extraDataPosition + ExtraDataLength - reader.BaseStream.Position)
-                additional.Add(AdditionalLayerInformation.Parse(reader, isPSB));
+                additional.Add(AdditionalLayerInformation.Parse(reader, isPSB, extraDataPosition + ExtraDataLength));
             AdditionalLayerInformations = [.. additional];
-            //残りが詰め物だけなら終わりまで進める(追加情報のあとの詰め物を読み飛ばすときに数バイト読みすぎることがあり、そのときも戻して合わせる。上流と同じ)
+            //残りが詰め物だけなら終わりまで進める(上流と同じ)
             if (extraDataPosition + ExtraDataLength - reader.BaseStream.Position < maxPadding)
                 reader.BaseStream.Position = extraDataPosition + ExtraDataLength;
 
