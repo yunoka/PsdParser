@@ -18,7 +18,11 @@ namespace PsdParser
         //ZIP圧縮のデータの長さ(圧縮したまま)。展開は行の順に1行ずつ行い、チャンネル全体を確保しない
         readonly long zipLength;
         //公開の ReadLine が使う展開の途中の状態(LayerImage.Read は呼ぶたびに自分の状態を持つ)
+#if NET9_0_OR_GREATER
         readonly Lock zipLock = new();
+#else
+        readonly object zipLock = new(); //System.Threading.Lock は .NET 9 から
+#endif
         readonly ZipCursor sharedCursor = new();
         volatile bool closed;
 
