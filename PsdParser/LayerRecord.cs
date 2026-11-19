@@ -51,7 +51,8 @@
             reader.EnsureAvailable(ExtraDataLength, "Layer extra data");
             var extraDataPosition = reader.BaseStream.Position;
 
-            LayerMaskAndAdjustmentLayerData = new LayerMaskAndAdjustmentLayerData(reader, isPSB);
+            LayerMaskAndAdjustmentLayerData = new LayerMaskAndAdjustmentLayerData(reader, isPSB,
+                ChannelInfos.Any(c => c.Id == ChannelId.RealUserSuppliedLayerMask));
             LayerBlendingRangesData = new LayerBlendingRangesData(reader);
             LayerName = reader.ReadPascalString(4);
 
