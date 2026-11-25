@@ -76,6 +76,7 @@ namespace PsdParser
                 AdditionalLayerInformationKey.SectionDividerSetting or AdditionalLayerInformationKey.SectionDividerSetting2 => new SectionDividerSetting(reader, key, length),
                 AdditionalLayerInformationKey.ObjectBasedEffects or AdditionalLayerInformationKey.MultipleObjectBasedEffects => new ObjectBasedEffects(reader, key, length),
                 AdditionalLayerInformationKey.FillOpacity => new FillOpacity(reader, length),
+                AdditionalLayerInformationKey.Patterns or AdditionalLayerInformationKey.Patterns2 or AdditionalLayerInformationKey.Patterns3 => new Patterns(reader, key, length, isPSB),
                 _ => new AdditionalLayerInformation(reader, key, length),
             };
 

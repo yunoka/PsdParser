@@ -43,6 +43,10 @@
         public bool? HasRealMergedData => ImageResourceSection.Blocks.OfType<ImageResourceBlocks.VersionInfo>().FirstOrDefault()?.HasRealMergedData;
         //包括光源の角度(度。リソース 1037)。レイヤースタイルの「包括光源を使用」の効果が使う。リソースがない・読めなければ 30(仕様書の既定)
         public int GlobalLightAngle => ImageResourceSection.Blocks.OfType<ImageResourceBlocks.GlobalAngle>().FirstOrDefault()?.Angle ?? 30;
+        //パターンの画像の一覧(文書全体の追加情報の Patt・Pat2・Pat3 を、ファイルの順に並べたもの)。使うたびに一覧を作る。
+        //壊れていれば InvalidPsdDataException(ファイルとレイヤーは読める)
+        public IReadOnlyList<AdditionalLayerInformations.Pattern> Patterns =>
+            [.. LayerAndMaskInformationSection.AdditionalLayerInformations.OfType<AdditionalLayerInformations.Patterns>().SelectMany(p => p.Items)];
 
         public PsdFile(string file) : this(file, PsdLimits.Default)
         {
@@ -112,6 +116,11 @@
                     lock (imageDataLock)
                         foreach (var channel in imageDataSection?.ChannelImages ?? [])
                             channel.Close();
+                    //パターン(文書全体とレイヤーの追加情報の Patt・Pat2・Pat3)の Read() も、以後は ObjectDisposedException にする
+                    var infos = (LayerAndMaskInformationSection?.AdditionalLayerInformations ?? [])
+                        .Concat((LayerAndMaskInformationSection?.LayerInfo?.Items ?? []).SelectMany(item => item.Record?.AdditionalLayerInformations ?? []));
+                    foreach (var patterns in infos.OfType<AdditionalLayerInformations.Patterns>())
+                        patterns.Close();
                     stream?.Dispose();
                     reader?.Dispose();
                 }
