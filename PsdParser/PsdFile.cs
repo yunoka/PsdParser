@@ -43,6 +43,8 @@
         public bool? HasRealMergedData => ImageResourceSection.Blocks.OfType<ImageResourceBlocks.VersionInfo>().FirstOrDefault()?.HasRealMergedData;
         //包括光源の角度(度。リソース 1037)。レイヤースタイルの「包括光源を使用」の効果が使う。リソースがない・読めなければ 30(仕様書の既定)
         public int GlobalLightAngle => ImageResourceSection.Blocks.OfType<ImageResourceBlocks.GlobalAngle>().FirstOrDefault()?.Angle ?? 30;
+        //包括光源の高度(度。リソース 1049)。レイヤースタイルの「包括光源を使用」のベベルとエンボスが使う。リソースがない・読めなければ 30(Photoshop の既定)
+        public int GlobalLightAltitude => ImageResourceSection.Blocks.OfType<ImageResourceBlocks.GlobalAltitude>().FirstOrDefault()?.Altitude ?? 30;
         //パターンの画像の一覧(文書全体の追加情報の Patt・Pat2・Pat3 を、ファイルの順に並べたもの)。使うたびに一覧を作る。
         //壊れていれば InvalidPsdDataException(ファイルとレイヤーは読める)
         public IReadOnlyList<AdditionalLayerInformations.Pattern> Patterns =>
